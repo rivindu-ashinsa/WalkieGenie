@@ -776,3 +776,94 @@ with colA:
             ret_units = st.number_input("Units to return now", min_value=1, max_value=remaining, value=min(1, remaining))
             damaged = st.checkbox("Mark as damaged")
             return_note = st.text_area("Return notes (optional)")
+            ret_submit = st.form_submit_button("Mark Returned")
+
+            if ret_submit:
+                success = mark_return(conn, sel, int(ret_units), return_note, damaged)
+                if success:
+                    st.success(f"✅ Return recorded successfully for Booking {sel}")
+                    st.rerun()
+                else:
+                    st.error("❌ Failed to update booking. Try again.")
+
+with colB:
+    st.header("⚠️ Alerts & Notifications")
+    df_alerts = get_bookings_df(conn)
+
+    if not df_alerts.empty:
+        today = pd.Timestamp(datetime.now())
+        df_alerts['days_left'] = (df_alerts['end_date'] - today).dt.days
+
+        due_today = df_alerts[df_alerts['days_left'] <= 0]
+        due_soon = df_alerts[(df_alerts['days_left'] > 0) & (df_alerts['days_left'] <= 3)]
+
+        if not due_today.empty:
+            st.error(f"🚨 {len(due_today)} booking(s) due today or overdue")
+            st.dataframe(
+                due_today[['booking_id','client_name','phone','units','end_date','status']],
+                use_container_width=True,
+                height=200
+            )
+        elif not due_soon.empty:
+            st.warning(f"⏳ {len(due_soon)} booking(s) due within 3 days")
+            st.dataframe(
+                due_soon[['booking_id','client_name','phone','units','end_date','status']],
+                use_container_width=True,
+                height=200
+            )
+        else:
+            st.success("✅ No urgent returns in the next 3 days")
+    else:
+        st.info("No bookings yet.")
+
+    st.markdown("---")
+    st.subheader("🔍 Search Bookings")
+
+    query = st.text_input("Search by client, phone, or booking ID")
+
+    if query:
+        df_all = get_bookings_df(conn)
+        
+        if not df_all.empty:
+            mask = (
+                df_all['client_name'].str.contains(query, case=False, na=False) |
+                df_all['phone'].str.contains(query, case=False, na=False) |
+                df_all['booking_id'].str.contains(query, case=False, na=False)
+            )
+            results = df_all[mask]
+
+            if not results.empty:
+                results_display = results[['booking_id','client_name','phone','units','start_date','end_date','status','notes']]
+                results_display['start_date'] = results_display['start_date'].dt.strftime('%Y-%m-%d')
+                results_display['end_date'] = results_display['end_date'].dt.strftime('%Y-%m-%d')
+                st.dataframe(results_display, use_container_width=True, height=250)
+            else:
+                st.info("No matching bookings found.")
+
+    st.markdown("---")
+    st.subheader("🛠 Quick Inventory Adjust")
+
+    adj_col1, adj_col2 = st.columns(2)
+
+    with adj_col1:
+        inc = st.number_input("Add / remove units (negative to remove)", value=0, step=1)
+        if st.button("Apply adjustment"):
+            try:
+                current = get_total_walkies(conn)
+                new_count = max(0, current + int(inc))
+                set_total_walkies(conn, new_count)
+                st.success(f"Inventory updated: {current} → {new_count}")
+                st.rerun()
+            except Exception as e:
+                st.error(str(e))
+
+    with adj_col2:
+        if st.button("Reset Partial Returns (Dev/Test)"):
+            c = conn.cursor()
+            c.execute("UPDATE bookings SET status='active' WHERE returned_units < units")
+            conn.commit()
+            st.info("All bookings restored to active state for testing")
+            st.rerun()
+
+st.markdown("---")
+st.caption("Built with ❤️ using Streamlit | Walkie Rental Manager")
